@@ -1,34 +1,17 @@
 #include "quickjspp.hpp"
 #include <iostream>
-#include <numeric>
 
-template <typename T>
-void test_conv(qjs::Context& context, T x)
+class MyClass
 {
-    auto jsx = context.newValue(x);
+public:
+    MyClass() {}
+    MyClass(std::vector<int>) {}
 
-    auto x2 = static_cast<T>(jsx);
+    double member_variable = 5.5;
+    std::string member_function(const std::string& s) { return "Hello, " + s; }
+};
 
-    if(!(x2 == x))
-        throw std::exception();
-
-    if constexpr (std::is_integral_v<T> && !std::is_same_v<T, uint64_t>)
-    {
-        auto x3 = static_cast<int64_t>(jsx);
-        if(!(x3 == x))
-            throw std::exception();
-    }
-}
-
-template <typename T>
-void test_num(qjs::Context& context)
-{
-    test_conv(context, std::numeric_limits<T>::min()+1);
-    test_conv(context, std::numeric_limits<T>::max()-1);
-    test_conv(context, std::numeric_limits<T>::min());
-    test_conv(context, std::numeric_limits<T>::max());
-
-}
+void println(const std::string& str) { std::cout << str << std::endl; }
 
 int main()
 {
@@ -36,22 +19,28 @@ int main()
     qjs::Context context(runtime);
     try
     {
-        test_num<int16_t>(context);
-        test_num<int32_t>(context);
-        test_num<uint32_t>(context);
+        // export classes as a module
+        auto& module = context.addModule("MyModule");
+        module.function<&println>("println");
+        module.class_<MyClass>("MyClass")
+                .constructor<>()
+                .constructor<std::vector<int>>("MyClassA")
+                .fun<&MyClass::member_variable>("member_variable")
+                .fun<&MyClass::member_function>("member_function");
+        // import module
+        context.eval("import * as my from 'MyModule'; globalThis.my = my;", "<import>", JS_EVAL_TYPE_MODULE);
+        // evaluate js code
+        context.eval("let v1 = new my.MyClass();" "\n"
+                     "v1.member_variable = 1;" "\n"
+                     "let v2 = new my.MyClassA([1,2,3]);" "\n"
+                     "function my_callback(str) {" "\n"
+                     "  my.println(v2.member_function(str));" "\n"
+                     "}" "\n"
+        );
 
-        // int64 is represented as double...
-        test_conv<int64_t>(context, -(1ll << 52));
-        test_conv<int64_t>(context, -(1ll << 52) + 1);
-        test_conv<int64_t>(context, (1ll << 52));
-        test_conv<int64_t>(context, (1ll << 52) - 1);
-        test_conv<uint64_t>(context, (1ll << 52));
-        test_conv<uint64_t>(context, (1ll << 52) - 1);
-
-
-        test_num<double>(context);
-        //test_num<float>(context);
-
+        // callback
+        auto cb = (std::function<void(const std::string&)>) context.eval("my_callback");
+        cb("world");
     }
     catch(qjs::exception)
     {
